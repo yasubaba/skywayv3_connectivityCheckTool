@@ -1,0 +1,18 @@
+{
+  "name": "p2p-room",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:example": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@skyway-sdk/room": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vite": "^8.0.8"
+  }
+}
