@@ -25,6 +25,23 @@ startButton.onclick = async () => {
   logArea.textContent = '';
   appendLog('=== 疎通確認テストを開始します ===');
 
+  // 重複して成功ログが出力されるのを防ぐフラグ
+  let isTestCompleted = false;
+
+  // 成功ログを出力する共通関数
+  const triggerSuccess = (source: 'Publication' | 'Subscription') => {
+    if (!isTestCompleted) {
+      isTestCompleted = true;
+      appendLog(`\n🎉 【${source}】イベントにより接続確立を確認しました！`);
+      appendLog('======================================================');
+      appendLog('🎉 【疎通確認結果：すべて成功】');
+      appendLog('1. RTC-APIサーバー: 正常 (Context作成完了)');
+      appendLog('2. シグナリングサーバー: 正常 (ルーム管理・シグナリング確立完了)');
+      appendLog('3. TURNサーバー: 正常 (turnOnlyでのP2Pデータ接続に成功)');
+      appendLog('======================================================');
+    }
+  };
+
   try {
     // ------------------------------------------------------------
     // 1. RTC-APIサーバーとの接続確認 (Publisherインスタンス)
@@ -52,11 +69,21 @@ startButton.onclick = async () => {
     const publication = await pubMember.publish(dataStream, { type: 'p2p' });
     appendLog(`✅ [Publisher] DataStreamをPublishしました。 Publication ID: ${publication.id}`);
 
+    // ★【新設】Publication側の ConnectionState 遷移を監視
+    publication.onConnectionStateChanged.add(({state}) => {
+      appendLog(`🔄 [Publisher - Publication] ConnectionStateが遷移しました: ${state}`);
+      if (state === 'connected') {
+        triggerSuccess('Publication');
+      }
+    });
+
     appendLog('--------------------------------------------------');
     
     // --- Subscriber側の処理 (別インスタンスとして実行) ---
     appendLog('【3/3】[Subscriber] 別インスタンスでRTC-APIサーバーへ接続中...');
-    const subContext = await SkyWayContext.CreateForDevelopment(appId, secretKey);
+    const subContext = await SkyWayContext.CreateForDevelopment(appId, secretKey, {
+      rtcConfig: { turnPolicy: 'turnOnly' },
+    });
     appendLog('✅ [Subscriber] RTC-APIサーバーの疎通確認に成功しました。');
 
     appendLog('[Subscriber] ルームに参加中...');
@@ -64,47 +91,30 @@ startButton.onclick = async () => {
     const subMember = await subRoom.join({ name: 'test-subscriber' });
     appendLog(`✅ [Subscriber] ルームに参加しました。 Member ID: ${subMember.id}`);
 
-    // テストの重複完了出力を防ぐフラグ
-    let isTestCompleted = false;
-
     // 購読処理とConnectionStateの監視
     const handleSubscribe = async (pub: any) => {
       if (pub.publisher.id === pubMember.id && pub.contentType === 'data') {
         appendLog(`[Subscriber] 対象のパブリケーションを検知 (ID: ${pub.id})。Subscribeを開始...`);
         
-        // 1. Subscribeを実行
         const { subscription } = await subMember.subscribe(pub.id);
         appendLog(`✅ [Subscriber] Subscribe完了。 Subscription ID: ${subscription.id}`);
         
-        // 状態判定の共通ロジック
-        const processState = (state: string) => {
-          appendLog(`🔄 [Subscriber] ConnectionState: ${state}`);
-          
-          if (state === 'connected' && !isTestCompleted) {
-            isTestCompleted = true; // 最初に 'connected' になった時だけ実行
-            appendLog('\n======================================================');
-            appendLog('🎉 【疎通確認結果：すべて成功】');
-            appendLog('1. RTC-APIサーバー: 正常 (Context作成完了)');
-            appendLog('2. シグナリングサーバー: 正常 (ルーム管理・シグナリング確立完了)');
-            appendLog('3. TURNサーバー: 正常 (turnOnlyでのP2Pデータ接続に成功)');
-            appendLog('======================================================');
-          }
-        };
-
-        // 2. 今後の状態遷移をキャッチするリスナーを設置
+        // 既存のSubscription側のイベント監視（要望通り残しています）
         subscription.onConnectionStateChanged.add((state) => {
-          processState(state);
+          appendLog(`🔄 [Subscriber - Subscription] ConnectionStateが遷移しました: ${state}`);
+          if (state === 'connected') {
+            triggerSuccess('Subscription');
+          }
         });
-
-        // 3. 【ここが重要】登録が間に合わず、すでに変化していた場合のために現在の状態を即時チェック
         
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        const currentState = subscription.getConnectionState();
-        processState(currentState);
+        // ★【修正】100msecの遅延を入れる
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // 念のため初期状態もログに出力
+        appendLog(`🔄 [Subscriber - Subscription] 初期状態: ${subscription.getConnectionState()}`);
       }
     };
 
-    // 既存のパブリケーションを確認
+    // 既存のパブリケーションを確認して購読
     for (const pub of subRoom.publications) {
       await handleSubscribe(pub);
     }
